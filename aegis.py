@@ -1,6 +1,7 @@
 import socket
 import json
 import sys
+import httpx
 
 WORDS = ["www", "mail", "api", "dev", "admin", "test", "blog", "shop", "app"]
 PORTS = [22, 80, 443, 3306, 5432, 6379, 8080, 27017]
@@ -30,11 +31,48 @@ def scan_ports(host, ports):
             open_ports.append({"port": port, "state": "open"})
     return open_ports
 
+def extract_title(html):
+    """Find the <title> tag content in HTML."""
+    lower = html.lower()
+    start = lower.find("<title>")
+    if start == -1:
+        return ""
+    start += len("<title>")
+    end = lower.find("</title>", start)
+    if end == -1:
+        return ""
+    return html[start:end].strip()
+
+def probe_http(host, port):
+    """Try to fetch a webpage from this host:port."""
+    for scheme in ["https", "http"]:
+        url = f"{scheme}://{host}:{port}"
+        try:
+            with httpx.Client(
+                timeout=5,
+                verify=False,
+                follow_redirects=True,
+            ) as client:
+                response = client.get(url)
+                return {
+                    "url": url,
+                    "status": response.status_code,
+                    "server": response.headers.get("server", ""),
+                    "title": extract_title(response.text),
+                }
+        except Exception:
+            continue
+    return None
+
 def aegis(domain):
     subdomains = scan_domains(domain)
     results = []
     for sub in subdomains:
         open_ports = scan_ports(sub["name"], PORTS)
+        for port_info in open_ports:
+            http_info = probe_http(sub["name"], port_info["port"])
+            if http_info:
+                port_info["http"] = http_info
         results.append({
             "host": sub["name"],
             "ip": sub["ip"],
